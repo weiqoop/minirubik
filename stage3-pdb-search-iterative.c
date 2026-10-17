@@ -32,6 +32,10 @@ typedef struct {
 
 enum { SEARCH_STACK_CAPACITY = MAX_DEPTH + 1 };
 
+#ifdef ITERATIVE_DEBUG
+enum { ITERATION_LIMIT = 1000000 };
+#endif
+
 static const char *const move_names[MOVES] = {
     "R", "R2", "R'", "B", "B2", "B'", "D", "D2", "D'"
 };
@@ -160,9 +164,27 @@ static int search_iterative(uint16_t permutation, uint16_t orientation,
 {
     search_frame_t stack[SEARCH_STACK_CAPACITY];
     uint8_t stack_size = 0;
+#ifdef ITERATIVE_DEBUG
+    uint64_t iterations = 0;
+#endif
     if (!stack_push(stack, &stack_size, permutation, orientation, 0, -1))
         return 0;
     while (stack_size != 0) {
+#ifdef ITERATIVE_DEBUG
+        if (++iterations == ITERATION_LIMIT) {
+            search_frame_t *top = &stack[stack_size - 1U];
+            fprintf(stderr,
+                    "iterative limit: iterations=%llu stack_size=%u "
+                    "depth=%u next_move=%u entered=%u previous_face=%d "
+                    "nodes_total=%llu\n",
+                    (unsigned long long) iterations, stack_size, top->depth,
+                    top->next_move, top->entered, top->previous_face,
+                    (unsigned long long) stats->nodes[0] + stats->nodes[1] +
+                    stats->nodes[2] + stats->nodes[3] + stats->nodes[4] +
+                    stats->nodes[5] + stats->nodes[6]);
+            return 0;
+        }
+#endif
         search_frame_t *frame = &stack[stack_size - 1U];
         if (!frame->entered) {
             ++stats->nodes[frame->depth];
@@ -206,8 +228,11 @@ static int search_iterative(uint16_t permutation, uint16_t orientation,
         uint8_t face = (uint8_t) (move / 3U);
         if ((int8_t) face == frame->previous_face)
             continue;
-        uint16_t next_permutation = frame->permutation;
-        uint16_t next_orientation = frame->orientation;
+        uint16_t parent_permutation = frame->permutation;
+        uint16_t parent_orientation = frame->orientation;
+        uint8_t parent_depth = frame->depth;
+        uint16_t next_permutation = parent_permutation;
+        uint16_t next_orientation = parent_orientation;
         uint8_t turns = (uint8_t) (move % 3U + 1U);
         for (uint8_t turn = 0; turn < turns; ++turn) {
             next_permutation =
@@ -215,10 +240,18 @@ static int search_iterative(uint16_t permutation, uint16_t orientation,
             next_orientation =
                 stage3_orientation_transition[face][next_orientation];
         }
-        forward[frame->depth] = move;
+        forward[parent_depth] = move;
         if (!stack_push(stack, &stack_size, next_permutation, next_orientation,
-                        (uint8_t) (frame->depth + 1U), (int8_t) face))
+                (uint8_t) (parent_depth + 1U), (int8_t) face)) {
+    #ifdef ITERATIVE_DEBUG
+            fprintf(stderr,
+                "stack overflow: stack_size=%u parent_depth=%u "
+                "next_move=%u entered=%u move=%u\n",
+                stack_size, parent_depth, frame->next_move,
+                frame->entered, move);
+    #endif
             return 0;
+        }
         continue;
     }
     return 1;
